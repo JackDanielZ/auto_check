@@ -32,6 +32,7 @@ typedef struct _List
 
 typedef struct
 {
+  json_object *jobj;
   const char *name;
   const char *path;
   const char *branch;
@@ -145,11 +146,11 @@ _repo_create(const char *name)
 }
 
 static int
-_git_last_id(Repo *r, char *output)
+_git_last_id(const char *path, char *output)
 {
   char buf[256];
   FILE *fp;
-  sprintf(buf, "cd %s; git log -1 --pretty=format:'%%h'", r->path);
+  sprintf(buf, "cd %s; git log -1 --pretty=format:'%%h'", path);
   fp = popen(buf, "r");
   if (!fp)
   {
@@ -164,14 +165,53 @@ static void
 _set_repo_as_todo(Repo *r)
 {
   List *e = r->dependents;
+  if (!r->todo) printf("Repository %s to check\n", r->name);
   r->todo = 1;
-  printf("Repository %s to check\n", r->name);
   while (e)
   {
     r = e->data;
     _set_repo_as_todo(r);
     e = e->next;
   }
+}
+
+static int
+_update_branch(const char *name, const char *path, const char *branch)
+{
+  char buf[1024];
+  char old_id[20], new_id[20];
+  memset(old_id, 0, sizeof(old_id));
+  memset(new_id, 0, sizeof(new_id));
+  sprintf(buf, "cd %s; git fetch > /dev/null 2>&1", path);
+  if (system(buf) != 0)
+  {
+    fprintf(stderr, "Unable to fetch from repo %s\n", name);
+    return -1;
+  }
+  sprintf(buf, "cd %s; git checkout %s > /dev/null 2>&1", path, branch);
+  if (system(buf) != 0)
+  {
+    fprintf(stderr, "Unable to move to branch %s of repo %s\n", branch, name);
+    return -1;
+  }
+  if (_git_last_id(path, old_id) != 0)
+  {
+    fprintf(stderr, "Unable to git information from repo %s\n", name);
+    return -1;
+  }
+  sprintf(buf, "cd %s; git reset --hard origin/%s > /dev/null 2>&1", path, branch);
+  if (system(buf) != 0)
+  {
+    fprintf(stderr, "Unable to reset branch %s of repo %s\n", branch, name);
+    return -1;
+  }
+  if (_git_last_id(path, new_id) != 0)
+  {
+    fprintf(stderr, "Unable to git information from repo %s\n", name);
+    return -1;
+  }
+  if (strcmp(old_id, new_id)) return 1;
+  return 0;
 }
 
 int main(int argc, char **argv)
@@ -200,15 +240,16 @@ int main(int argc, char **argv)
       char *jbuf = _file_get_as_string(buf);
       json_object *jobj = json_tokener_parse(jbuf);
       r = _repo_create(STRING_GET(JSON_GET(jobj, "name")));
+      r->jobj = jobj;
       r->path = STRING_GET(JSON_GET(jobj, "path"));
       r->valid = 1;
 
       arr_obj = JSON_GET(jobj, "depends");
-      if (json_object_get_type(arr_obj) == json_type_array)
+      if (arr_obj)
       {
-        JSON_ARRAY_FOREACH(arr_obj, dep)
+        json_object_object_foreach(arr_obj, dep_repo, dep_jpath)
         {
-          Repo *rd = _repo_create(STRING_GET(dep));
+          Repo *rd = _repo_create(dep_repo);
           rd->dependents = _list_append(rd->dependents, r);
         }
       }
@@ -259,32 +300,31 @@ int main(int argc, char **argv)
     r = e->data;
     if (r->valid)
     {
-      char old_id[20], new_id[20];
-      memset(old_id, 0, sizeof(old_id));
-      memset(new_id, 0, sizeof(new_id));
-      sprintf(buf, "cd %s; git checkout %s > /dev/null 2>&1", r->path, r->branch);
-      if (system(buf) != 0)
+      json_object *arr_obj;
+
+      ret = _update_branch(r->name, r->path, r->branch);
+      if (ret == -1)
       {
-        fprintf(stderr, "Unable to move to branch %s of repo %s\n", r->branch, r->name);
+        ret = 1;
         goto end;
       }
-      if (_git_last_id(r, old_id) != 0)
+      if (ret == 1) _set_repo_as_todo(r);
+
+      arr_obj = JSON_GET(r->jobj, "depends");
+      if (arr_obj)
       {
-        fprintf(stderr, "Unable to git information from repo %s\n", r->name);
-        goto end;
+        json_object_object_foreach(arr_obj, dep_repo, dep_jpath)
+        {
+          Repo *rd = _repo_create(dep_repo);
+          sprintf(buf, "%s/%s", r->path, STRING_GET(dep_jpath));
+          ret = _update_branch(dep_repo, buf, rd->branch);
+          if (ret == -1)
+          {
+            ret = 1;
+            goto end;
+          }
+        }
       }
-      sprintf(buf, "cd %s; git pull --recurse-submodules=yes > /dev/null 2>&1", r->path);
-      if (system(buf) != 0)
-      {
-        fprintf(stderr, "Unable to pull branch %s of repo %s\n", r->branch, r->name);
-        goto end;
-      }
-      if (_git_last_id(r, new_id) != 0)
-      {
-        fprintf(stderr, "Unable to git information from repo %s\n", r->name);
-        goto end;
-      }
-      if (strcmp(old_id, new_id)) _set_repo_as_todo(r);
     }
     e = e->next;
   }
