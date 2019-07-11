@@ -34,6 +34,7 @@ typedef struct
 {
   const char *name;
   const char *path;
+  const char *branch;
   List *dependents; /* List of Repo which depend on this repo */
   List *builds; /* List of const char * */
   int valid;
@@ -138,6 +139,7 @@ _repo_create(const char *name)
 
   r = calloc(1, sizeof(*r));
   r->name = name;
+  r->branch = "master";
   repos = _list_append(repos, r);
   return r;
 }
@@ -178,10 +180,7 @@ int main(int argc, char **argv)
   struct dirent *ep;
   Repo *r;
   List *e;
-  int ret = 1;
-
-  (void) argc;
-  (void) argv;
+  int ret = 1, i;
 
   DIR *dp = opendir("./configs");
   if (!dp)
@@ -227,6 +226,32 @@ int main(int argc, char **argv)
   }
   closedir (dp);
 
+  for (i = 1; i < argc; i++)
+  {
+    int found = 0;
+    char *repo = argv[i];
+    char *colon = strchr(argv[i], ':');
+    if (colon) *colon = '\0';
+
+    e = repos;
+    while (e)
+    {
+      r = e->data;
+      if (!found && !strcmp(r->name, repo))
+      {
+        found = 1;
+        if (colon) r->branch = colon + 1;
+        _set_repo_as_todo(r);
+      }
+      e = e->next;
+    }
+    if (found == 0)
+    {
+      fprintf(stderr, "Argument %s - repo %s not found\n", argv[i], repo);
+      goto end;
+    }
+  }
+
   /* Pull code and check if changes happened */
   e = repos;
   while (e)
@@ -237,10 +262,10 @@ int main(int argc, char **argv)
       char old_id[20], new_id[20];
       memset(old_id, 0, sizeof(old_id));
       memset(new_id, 0, sizeof(new_id));
-      sprintf(buf, "cd %s; git checkout master > /dev/null 2>&1", r->path);
+      sprintf(buf, "cd %s; git checkout %s > /dev/null 2>&1", r->path, r->branch);
       if (system(buf) != 0)
       {
-        fprintf(stderr, "Unable to move to master branch of repo %s\n", r->name);
+        fprintf(stderr, "Unable to move to branch %s of repo %s\n", r->branch, r->name);
         goto end;
       }
       if (_git_last_id(r, old_id) != 0)
@@ -248,10 +273,10 @@ int main(int argc, char **argv)
         fprintf(stderr, "Unable to git information from repo %s\n", r->name);
         goto end;
       }
-      sprintf(buf, "cd %s; git pull --rebase --recurse-submodules=yes > /dev/null 2>&1", r->path);
+      sprintf(buf, "cd %s; git pull --recurse-submodules=yes > /dev/null 2>&1", r->path);
       if (system(buf) != 0)
       {
-        fprintf(stderr, "Unable to pull master branch of repo %s\n", r->name);
+        fprintf(stderr, "Unable to pull branch %s of repo %s\n", r->branch, r->name);
         goto end;
       }
       if (_git_last_id(r, new_id) != 0)
