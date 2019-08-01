@@ -239,7 +239,7 @@ int main(int argc, char **argv)
 
   if (lock_fd == -1 && errno == EEXIST)
   {
-    fprintf(stderr, "It seems that the program is already running\nRetry later\n");
+    printf("It seems that the program is already running\nRetry later\n");
     return -1;
   }
   close(lock_fd);
