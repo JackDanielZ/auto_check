@@ -207,6 +207,18 @@ _update_branch(const char *name, const char *path, const char *branch)
     fprintf(stderr, "Unable to reset branch %s of repo %s\n", branch, name);
     return -1;
   }
+  sprintf(buf, "cd %s; git submodule init > /dev/null 2>&1", path);
+  if (system(buf) != 0)
+  {
+    fprintf(stderr, "Unable to init submodules of repo %s\n", name);
+    return -1;
+  }
+  sprintf(buf, "cd %s; git submodule update > /dev/null 2>&1", path);
+  if (system(buf) != 0)
+  {
+    fprintf(stderr, "Unable to update submodules of repo %s\n", name);
+    return -1;
+  }
   if (_git_last_id(path, new_id) != 0)
   {
     fprintf(stderr, "Unable to git information from repo %s\n", name);
