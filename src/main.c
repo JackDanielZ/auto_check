@@ -26,6 +26,8 @@
 
 #define ERR printf
 
+#define PRINT_V(__fmt, ...) if (_verbose) printf(__fmt, ## __VA_ARGS__)
+
 typedef struct _List
 {
   struct _List *next;
@@ -45,6 +47,8 @@ typedef struct
 } Repo;
 
 static List *repos = NULL; /* List of Repo */
+
+static int _verbose = 0;
 
 static json_object *
 _json_get(json_object *obj, ...)
@@ -177,6 +181,8 @@ _set_repo_as_todo(Repo *r)
   }
 }
 
+#define REDIRECT (_verbose?"":"> /dev/null 2>&1")
+
 static int
 _update_branch(const char *name, const char *path, const char *branch)
 {
@@ -184,13 +190,22 @@ _update_branch(const char *name, const char *path, const char *branch)
   char old_id[20], new_id[20];
   memset(old_id, 0, sizeof(old_id));
   memset(new_id, 0, sizeof(new_id));
-  sprintf(buf, "cd %s; git fetch > /dev/null 2>&1", path);
+  sprintf(buf, "cd %s; git fetch %s", path, REDIRECT);
+  PRINT_V("%s\n", buf);
   if (system(buf) != 0)
   {
     fprintf(stderr, "Unable to fetch from repo %s\n", name);
     return -1;
   }
-  sprintf(buf, "cd %s; git checkout %s > /dev/null 2>&1", path, branch);
+  sprintf(buf, "cd %s; if [ ! -z \"`git submodule status`\" ]; then git submodule deinit -f . %s; fi", path, REDIRECT);
+  PRINT_V("%s\n", buf);
+  if (system(buf) != 0)
+  {
+    fprintf(stderr, "Unable to deinit submodules of repo %s\n", name);
+    return -1;
+  }
+  sprintf(buf, "cd %s; git checkout -f %s %s", path, branch, REDIRECT);
+  PRINT_V("%s\n", buf);
   if (system(buf) != 0)
   {
     fprintf(stderr, "Unable to move to branch %s of repo %s\n", branch, name);
@@ -198,30 +213,47 @@ _update_branch(const char *name, const char *path, const char *branch)
   }
   if (_git_last_id(path, old_id) != 0)
   {
-    fprintf(stderr, "Unable to git information from repo %s\n", name);
+    fprintf(stderr, "Unable to get information from repo %s\n", name);
     return -1;
   }
-  sprintf(buf, "cd %s; git reset --hard origin/%s > /dev/null 2>&1", path, branch);
-  if (system(buf) != 0)
-  {
-    fprintf(stderr, "Unable to reset branch %s of repo %s\n", branch, name);
-    return -1;
-  }
-  sprintf(buf, "cd %s; git submodule init > /dev/null 2>&1", path);
+  sprintf(buf, "cd %s; git submodule init %s", path, REDIRECT);
+  PRINT_V("%s\n", buf);
   if (system(buf) != 0)
   {
     fprintf(stderr, "Unable to init submodules of repo %s\n", name);
     return -1;
   }
-  sprintf(buf, "cd %s; git submodule update > /dev/null 2>&1", path);
+  sprintf(buf, "cd %s; git submodule update %s", path, REDIRECT);
+  PRINT_V("%s\n", buf);
   if (system(buf) != 0)
   {
     fprintf(stderr, "Unable to update submodules of repo %s\n", name);
     return -1;
   }
+  sprintf(buf, "cd %s; git clean -df %s", path, REDIRECT);
+  PRINT_V("%s\n", buf);
+  if (system(buf) != 0)
+  {
+    fprintf(stderr, "Unable to clean repo %s\n", name);
+    return -1;
+  }
+  sprintf(buf, "cd %s; git stash %s", path, REDIRECT);
+  PRINT_V("%s\n", buf);
+  if (system(buf) != 0)
+  {
+    fprintf(stderr, "Unable to stash repo %s\n", name);
+    return -1;
+  }
+  sprintf(buf, "cd %s; git reset --hard origin/%s %s", path, branch, REDIRECT);
+  PRINT_V("%s\n", buf);
+  if (system(buf) != 0)
+  {
+    fprintf(stderr, "Unable to reset branch %s of repo %s\n", branch, name);
+    return -1;
+  }
   if (_git_last_id(path, new_id) != 0)
   {
-    fprintf(stderr, "Unable to git information from repo %s\n", name);
+    fprintf(stderr, "Unable to get information from repo %s\n", name);
     return -1;
   }
   if (strcmp(old_id, new_id)) return 1;
@@ -291,6 +323,11 @@ int main(int argc, char **argv)
 
   for (i = 1; i < argc; i++)
   {
+    if (strstr(argv[i], "-v"))
+    {
+      _verbose = 1;
+      continue;
+    }
     int found = 0;
     char *repo = argv[i];
     char *colon = strchr(argv[i], ':');
@@ -363,7 +400,7 @@ int main(int argc, char **argv)
       while (builds)
       {
         const char *bline = builds->data;
-        printf("Check repo %s - Build %d\n", r->name, build_id);
+        printf("Check repo %s - Build %d (%s)\n", r->name, build_id, bline);
         sprintf(buf, "echo \"cd %s; %s\" > /tmp/auto_check.sh", r->path, bline);
         system(buf);
         system("cat /tmp/auto_check.sh > /tmp/auto_check.log");
@@ -382,7 +419,6 @@ int main(int argc, char **argv)
         build_id++;
       }
     }
-//    printf("Repo %s\n", r->name);
     e = e->next;
   }
 
