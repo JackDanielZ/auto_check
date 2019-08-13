@@ -181,6 +181,45 @@ _set_repo_as_todo(Repo *r)
   }
 }
 
+static Repo *
+_repo_candidate_find(const char *repo_name)
+{
+  Repo *r, *found_r = NULL;
+  List *e = repos;
+  int nb_found = 0, repo_len = strlen(repo_name), r_len;
+  while (e)
+  {
+    r = e->data;
+    r_len = strlen(r->name);
+
+    if (repo_len <= r_len && !strncmp(repo_name, r->name, repo_len))
+    {
+      found_r = r;
+      nb_found++;
+    }
+    e = e->next;
+  }
+  if (nb_found > 1)
+  {
+    found_r = NULL;
+    fprintf(stderr, "Too much candidates for %s: ", repo_name);
+    e = repos;
+    while (e)
+    {
+      r = e->data;
+      r_len = strlen(r->name);
+
+      if (repo_len <= r_len && !strncmp(repo_name, r->name, repo_len))
+      {
+        fprintf(stderr, "%s ", r->name);
+      }
+      e = e->next;
+    }
+    fprintf(stderr, "\n");
+  }
+  return found_r;
+}
+
 #define REDIRECT (_verbose?"":"> /dev/null 2>&1")
 
 static int
@@ -328,24 +367,17 @@ int main(int argc, char **argv)
       _verbose = 1;
       continue;
     }
-    int found = 0;
     char *repo = argv[i];
     char *colon = strchr(argv[i], ':');
     if (colon) *colon = '\0';
 
-    e = repos;
-    while (e)
+    r = _repo_candidate_find(repo);
+    if (r)
     {
-      r = e->data;
-      if (!found && !strcmp(r->name, repo))
-      {
-        found = 1;
-        if (colon) r->branch = colon + 1;
-        _set_repo_as_todo(r);
-      }
-      e = e->next;
+      if (colon) r->branch = colon + 1;
+      _set_repo_as_todo(r);
     }
-    if (found == 0)
+    else
     {
       fprintf(stderr, "Argument %s - repo %s not found\n", argv[i], repo);
       goto end;
@@ -375,12 +407,16 @@ int main(int argc, char **argv)
         json_object_object_foreach(arr_obj, dep_repo, dep_jpath)
         {
           Repo *rd = _repo_create(dep_repo);
-          sprintf(buf, "%s/%s", r->path, STRING_GET(dep_jpath));
-          ret = _update_branch(dep_repo, buf, rd->branch);
-          if (ret == -1)
+          sprintf(buf, "%s/%s/.git", r->path, STRING_GET(dep_jpath));
+          if (access(buf, R_OK) == 0)
           {
-            ret = 1;
-            goto end;
+            sprintf(buf, "%s/%s", r->path, STRING_GET(dep_jpath));
+            ret = _update_branch(dep_repo, buf, rd->branch);
+            if (ret == -1)
+            {
+              ret = 1;
+              goto end;
+            }
           }
         }
       }
