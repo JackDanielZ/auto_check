@@ -455,13 +455,13 @@ int main(int argc, char **argv)
         printf("Check repo %s - Build %d (%s)\n", r->name, build_id, bline);
         sprintf(buf, "echo \"cd %s; %s\" > /tmp/auto_check.sh", r->path, bline);
         system(buf);
-        system("cat /tmp/auto_check.sh > /tmp/auto_check.log");
-        if (system("sh /tmp/auto_check.sh >> /tmp/auto_check.log 2>&1") != 0)
+        if (system("sh /tmp/auto_check.sh > /tmp/auto_check.log 2>&1") != 0)
         {
           printf("Build %d of repo %s failed\n", build_id, r->name);
           if (access("./mailrc", R_OK) == 0)
           {
-            sprintf(buf, "cat /tmp/auto_check.log | MAILRC=./mailrc s-nail -s \"%s: build %d failed\" destination", r->name, build_id);
+            system("cat /tmp/auto_check.sh >> /tmp/auto_check.log");
+            sprintf(buf, "tac /tmp/auto_check.log | MAILRC=./mailrc s-nail -s \"%s: build %d failed\" destination", r->name, build_id);
             system(buf);
           }
           else printf("mailrc file not found in current directory\n");
