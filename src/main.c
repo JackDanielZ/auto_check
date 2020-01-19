@@ -39,6 +39,7 @@ typedef struct
   json_object *jobj;
   const char *name;
   const char *path;
+  const char *git_pull;
   const char *branch;
   List *dependents; /* List of Repo which depend on this repo */
   List *builds; /* List of const char * */
@@ -223,12 +224,13 @@ _repo_candidate_find(const char *repo_name)
 #define REDIRECT (_verbose?"":"> /dev/null 2>&1")
 
 static int
-_update_branch(const char *name, const char *path, const char *branch)
+_update_branch(const char *name, const char *path, const char *branch, const char *git_pull)
 {
   char buf[1024];
   char old_id[20], new_id[20];
   memset(old_id, 0, sizeof(old_id));
   memset(new_id, 0, sizeof(new_id));
+
   sprintf(buf, "cd %s; git fetch %s", path, REDIRECT);
   PRINT_V("%s\n", buf);
   if (system(buf) != 0)
@@ -283,12 +285,25 @@ _update_branch(const char *name, const char *path, const char *branch)
     fprintf(stderr, "Unable to stash repo %s\n", name);
     return -1;
   }
-  sprintf(buf, "cd %s; git reset --hard origin/%s %s", path, branch, REDIRECT);
-  PRINT_V("%s\n", buf);
-  if (system(buf) != 0)
+  if (git_pull)
   {
-    fprintf(stderr, "Unable to reset branch %s of repo %s\n", branch, name);
-    return -1;
+    sprintf(buf, "cd %s; %s", path, git_pull);
+    PRINT_V("%s\n", buf);
+    if (system(buf) != 0)
+    {
+      fprintf(stderr, "Unable to apply git_pull cmd '%s' to repo %s\n", git_pull, name);
+      return -1;
+    }
+  }
+  else
+  {
+    sprintf(buf, "cd %s; git reset --hard origin/%s %s", path, branch, REDIRECT);
+    PRINT_V("%s\n", buf);
+    if (system(buf) != 0)
+    {
+      fprintf(stderr, "Unable to reset branch %s of repo %s\n", branch, name);
+      return -1;
+    }
   }
   if (_git_last_id(path, new_id) != 0)
   {
@@ -335,6 +350,7 @@ int main(int argc, char **argv)
       r = _repo_create(STRING_GET(JSON_GET(jobj, "name")));
       r->jobj = jobj;
       r->path = STRING_GET(JSON_GET(jobj, "path"));
+      r->git_pull = STRING_GET(JSON_GET(jobj, "git-pull"));
       r->valid = 1;
 
       arr_obj = JSON_GET(jobj, "depends");
@@ -393,7 +409,7 @@ int main(int argc, char **argv)
     {
       json_object *arr_obj;
 
-      ret = _update_branch(r->name, r->path, r->branch);
+      ret = _update_branch(r->name, r->path, r->branch, r->git_pull);
       if (ret == -1)
       {
         ret = 1;
@@ -411,7 +427,7 @@ int main(int argc, char **argv)
           if (access(buf, R_OK) == 0)
           {
             sprintf(buf, "%s/%s", r->path, STRING_GET(dep_jpath));
-            ret = _update_branch(dep_repo, buf, rd->branch);
+            ret = _update_branch(dep_repo, buf, rd->branch, rd->git_pull);
             if (ret == -1)
             {
               ret = 1;
