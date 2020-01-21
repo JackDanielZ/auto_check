@@ -147,7 +147,6 @@ _repo_create(const char *name)
 
   r = calloc(1, sizeof(*r));
   r->name = name;
-  r->branch = "master";
   repos = _list_append(repos, r);
   return r;
 }
@@ -231,6 +230,8 @@ _update_branch(const char *name, const char *path, const char *branch, const cha
   memset(old_id, 0, sizeof(old_id));
   memset(new_id, 0, sizeof(new_id));
 
+  if (!branch) branch = "master";
+
   sprintf(buf, "cd %s; git fetch %s", path, REDIRECT);
   PRINT_V("%s\n", buf);
   if (system(buf) != 0)
@@ -287,7 +288,7 @@ _update_branch(const char *name, const char *path, const char *branch, const cha
   }
   if (git_pull)
   {
-    sprintf(buf, "cd %s; %s", path, git_pull);
+    sprintf(buf, "cd %s; %s %s", path, git_pull, REDIRECT);
     PRINT_V("%s\n", buf);
     if (system(buf) != 0)
     {
@@ -346,11 +347,16 @@ int main(int argc, char **argv)
       json_object *arr_obj;
       sprintf(buf, "./configs/%s", ep->d_name);
       char *jbuf = _file_get_as_string(buf);
-      json_object *jobj = json_tokener_parse(jbuf);
+      json_object *jobj = json_tokener_parse(jbuf), *jbr;
       r = _repo_create(STRING_GET(JSON_GET(jobj, "name")));
       r->jobj = jobj;
       r->path = STRING_GET(JSON_GET(jobj, "path"));
       r->git_pull = STRING_GET(JSON_GET(jobj, "git-pull"));
+      jbr = JSON_GET(jobj, "branch");
+      if (jbr)
+      {
+        r->branch = STRING_GET(jbr);
+      }
       r->valid = 1;
 
       arr_obj = JSON_GET(jobj, "depends");
@@ -427,7 +433,7 @@ int main(int argc, char **argv)
           if (access(buf, R_OK) == 0)
           {
             sprintf(buf, "%s/%s", r->path, STRING_GET(dep_jpath));
-            ret = _update_branch(dep_repo, buf, rd->branch, rd->git_pull);
+            ret = _update_branch(dep_repo, buf, rd->branch ? rd->branch : r->branch, rd->git_pull);
             if (ret == -1)
             {
               ret = 1;
