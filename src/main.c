@@ -45,6 +45,7 @@ typedef struct
   List *builds; /* List of const char * */
   int valid;
   int todo;
+  int todo_manual;
 } Repo;
 
 static List *repos = NULL; /* List of Repo */
@@ -223,76 +224,80 @@ _repo_candidate_find(const char *repo_name)
 #define REDIRECT (_verbose?"":"> /dev/null 2>&1")
 
 static int
-_update_branch(const char *name, const char *path, const char *branch, const char *git_pull)
+_update_branch(Repo *r, Repo *parent, char *override_path)
 {
   char buf[1024];
   char old_id[20], new_id[20];
+  const char *branch;
+  const char *path = r->path;
+
   memset(old_id, 0, sizeof(old_id));
   memset(new_id, 0, sizeof(new_id));
 
+  branch = r->branch;
+  if (!branch && parent && parent->branch) branch = parent->branch;
   if (!branch) branch = "master";
+
+  if (override_path) path = override_path;
 
   sprintf(buf, "cd %s; git fetch %s", path, REDIRECT);
   PRINT_V("%s\n", buf);
   if (system(buf) != 0)
   {
-    fprintf(stderr, "Unable to fetch from repo %s\n", name);
+    fprintf(stderr, "Unable to fetch from repo %s\n", r->name);
     return -1;
   }
   sprintf(buf, "cd %s; if [ ! -z \"`git submodule status`\" ]; then git submodule deinit -f . %s; fi", path, REDIRECT);
   PRINT_V("%s\n", buf);
   if (system(buf) != 0)
   {
-    fprintf(stderr, "Unable to deinit submodules of repo %s\n", name);
+    fprintf(stderr, "Unable to deinit submodules of repo %s\n", r->name);
     return -1;
   }
   sprintf(buf, "cd %s; git checkout -f %s %s", path, branch, REDIRECT);
   PRINT_V("%s\n", buf);
   if (system(buf) != 0)
   {
-    fprintf(stderr, "Unable to move to branch %s of repo %s\n", branch, name);
-    return -1;
+    fprintf(stderr, "Unable to move to branch %s of repo %s\n", branch, r->name);
+    if (r->todo_manual == 1)
+    {
+      return -1;
+    }
+    branch = "master";
+    sprintf(buf, "cd %s; git checkout -f %s %s", path, branch, REDIRECT);
+    PRINT_V("%s\n", buf);
+    if (system(buf) != 0)
+    {
+      fprintf(stderr, "Unable to move to branch %s of repo %s\n", branch, r->name);
+      return -1;
+    }
   }
   if (_git_last_id(path, old_id) != 0)
   {
-    fprintf(stderr, "Unable to get information from repo %s\n", name);
-    return -1;
-  }
-  sprintf(buf, "cd %s; git submodule init %s", path, REDIRECT);
-  PRINT_V("%s\n", buf);
-  if (system(buf) != 0)
-  {
-    fprintf(stderr, "Unable to init submodules of repo %s\n", name);
-    return -1;
-  }
-  sprintf(buf, "cd %s; git submodule update %s", path, REDIRECT);
-  PRINT_V("%s\n", buf);
-  if (system(buf) != 0)
-  {
-    fprintf(stderr, "Unable to update submodules of repo %s\n", name);
+    fprintf(stderr, "Unable to get information from repo %s\n", r->branch);
     return -1;
   }
   sprintf(buf, "cd %s; git clean -df %s", path, REDIRECT);
   PRINT_V("%s\n", buf);
   if (system(buf) != 0)
   {
-    fprintf(stderr, "Unable to clean repo %s\n", name);
+    fprintf(stderr, "Unable to clean repo %s\n", r->branch);
     return -1;
   }
   sprintf(buf, "cd %s; git stash %s", path, REDIRECT);
   PRINT_V("%s\n", buf);
   if (system(buf) != 0)
   {
-    fprintf(stderr, "Unable to stash repo %s\n", name);
+    fprintf(stderr, "Unable to stash repo %s\n", r->branch);
     return -1;
   }
-  if (git_pull)
+  if (r->git_pull)
   {
-    sprintf(buf, "cd %s; %s %s", path, git_pull, REDIRECT);
+    sprintf(buf, "cd %s; %s %s", path, r->git_pull, REDIRECT);
     PRINT_V("%s\n", buf);
     if (system(buf) != 0)
     {
-      fprintf(stderr, "Unable to apply git_pull cmd '%s' to repo %s\n", git_pull, name);
+      fprintf(stderr, "Unable to apply git_pull cmd '%s' to repo %s\n", r->git_pull, r->branch);
       return -1;
     }
   }
@@ -302,13 +307,27 @@ _update_branch(const char *name, const char *path, const char *branch, const cha
     PRINT_V("%s\n", buf);
     if (system(buf) != 0)
     {
-      fprintf(stderr, "Unable to reset branch %s of repo %s\n", branch, name);
+      fprintf(stderr, "Unable to reset branch %s of repo %s\n", branch, r->branch);
       return -1;
     }
   }
+  sprintf(buf, "cd %s; git submodule init %s", path, REDIRECT);
+  PRINT_V("%s\n", buf);
+  if (system(buf) != 0)
+  {
+    fprintf(stderr, "Unable to init submodules of repo %s\n", r->branch);
+    return -1;
+  }
+  sprintf(buf, "cd %s; git submodule update %s", path, REDIRECT);
+  PRINT_V("%s\n", buf);
+  if (system(buf) != 0)
+  {
+    fprintf(stderr, "Unable to update submodules of repo %s\n", r->branch);
+    return -1;
+  }
   if (_git_last_id(path, new_id) != 0)
   {
-    fprintf(stderr, "Unable to get information from repo %s\n", name);
+    fprintf(stderr, "Unable to get information from repo %s\n", r->name);
     return -1;
   }
   if (strcmp(old_id, new_id)) return 1;
@@ -398,6 +417,7 @@ int main(int argc, char **argv)
     {
       if (colon) r->branch = colon + 1;
       _set_repo_as_todo(r);
+      r->todo_manual = 1;
     }
     else
     {
@@ -415,7 +435,7 @@ int main(int argc, char **argv)
     {
       json_object *arr_obj;
 
-      ret = _update_branch(r->name, r->path, r->branch, r->git_pull);
+      ret = _update_branch(r, NULL, NULL);
       if (ret == -1)
       {
         ret = 1;
@@ -433,7 +453,7 @@ int main(int argc, char **argv)
           if (access(buf, R_OK) == 0)
           {
             sprintf(buf, "%s/%s", r->path, STRING_GET(dep_jpath));
-            ret = _update_branch(dep_repo, buf, rd->branch ? rd->branch : r->branch, rd->git_pull);
+            ret = _update_branch(rd, r, buf);
             if (ret == -1)
             {
               ret = 1;
