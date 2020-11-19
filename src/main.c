@@ -36,13 +36,19 @@ typedef struct _List
 
 typedef struct
 {
+  const char *name;
+  const char *command;
+} Build_Info;
+
+typedef struct
+{
   json_object *jobj;
   const char *name;
   const char *path;
   const char *git_pull;
   const char *branch;
   List *dependents; /* List of Repo which depend on this repo */
-  List *builds; /* List of const char * */
+  List *builds; /* List of Build_Info * */
   int valid;
   int todo;
   int todo_manual;
@@ -389,11 +395,14 @@ int main(int argc, char **argv)
       }
 
       arr_obj = JSON_GET(jobj, "builds");
-      if (json_object_get_type(arr_obj) == json_type_array)
+      if (arr_obj)
       {
-        JSON_ARRAY_FOREACH(arr_obj, bline)
+        json_object_object_foreach(arr_obj, build_name, build_command)
         {
-          r->builds = _list_append(r->builds, (void *)STRING_GET(bline));
+          Build_Info *bi = calloc(1, sizeof(*bi));
+          bi->name = build_name;
+          bi->command = STRING_GET(build_command);
+          r->builds = _list_append(r->builds, (void *)bi);
         }
       }
     }
@@ -474,27 +483,25 @@ int main(int argc, char **argv)
     if (r->todo == 1)
     {
       List *builds = r->builds;
-      int build_id = 1;
       while (builds)
       {
-        const char *bline = builds->data;
-        printf("Check repo %s - Build %d (%s)\n", r->name, build_id, bline);
-        sprintf(buf, "echo \"cd %s; %s\" > /tmp/auto_check.sh", r->path, bline);
+        Build_Info *bi = builds->data;
+        printf("Check repo %s - Build '%s' (%s)\n", r->name, bi->name, bi->command);
+        sprintf(buf, "echo \"cd %s; %s\" > /tmp/auto_check.sh", r->path, bi->command);
         system(buf);
         if (system("sh /tmp/auto_check.sh > /tmp/auto_check.log 2>&1") != 0)
         {
-          printf("Build %d of repo %s failed\n", build_id, r->name);
+          printf("Build '%s' of repo %s failed\n", bi->name, r->name);
           if (access("./mailrc", R_OK) == 0)
           {
             system("cat /tmp/auto_check.sh >> /tmp/auto_check.log");
-            sprintf(buf, "tac /tmp/auto_check.log | MAILRC=./mailrc s-nail -s \"%s: build %d failed\" destination", r->name, build_id);
+            sprintf(buf, "tac /tmp/auto_check.log | MAILRC=./mailrc s-nail -s \"%s: build '%s' failed\" destination", r->name, bi->name);
             system(buf);
           }
           else printf("mailrc file not found in current directory\n");
         }
-        else printf("Build %d of repo %s succeeded\n", build_id, r->name);
+        else printf("Build '%s' of repo %s succeeded\n", bi->name, r->name);
         builds = builds->next;
-        build_id++;
       }
     }
     e = e->next;
